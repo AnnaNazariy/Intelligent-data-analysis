@@ -1,0 +1,76 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.tree import DecisionTreeRegressor, plot_tree
+from sklearn.metrics import mean_squared_error, r2_score
+from scipy.stats import boxcox
+from sklearn.preprocessing import StandardScaler
+
+data = pd.read_csv("boston.csv")
+print(data.head())
+
+print(data.info())
+print(data.isnull().sum())
+data.dropna(inplace=True)  
+
+data_sorted = data.sort_values(by=data.columns[1])
+print(data_sorted.head())
+
+if data.dtypes.iloc[0] == 'object' and data.dtypes.iloc[1] == 'object':
+    contingency_table = pd.crosstab(data[data.columns[0]], data[data.columns[1]])
+    print(contingency_table)
+
+for col in data.select_dtypes(include=['float64', 'int64']).columns:
+    if (data[col] <= 0).any():
+        data[col] += abs(data[col].min()) + 1
+    data[col], _ = boxcox(data[col])
+
+X = data.drop(columns=[data.columns[-1]])  
+y = data[data.columns[-1]] 
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+model = DecisionTreeRegressor(max_depth=5, random_state=42)
+model.fit(X_train, y_train)
+plt.figure(figsize=(12, 6))
+plot_tree(model, feature_names=X.columns, filled=True)
+plt.show()
+
+y_pred = model.predict(X_test)
+print("MSE:", mean_squared_error(y_test, y_pred))
+print("R2 Score:", r2_score(y_test, y_pred))
+
+param_grid = {'max_depth': [3, 5, 10], 'min_samples_split': [2, 5, 10]}
+grid_search = GridSearchCV(DecisionTreeRegressor(random_state=42), param_grid, cv=5)
+grid_search.fit(X_train, y_train)
+print("Оптимальні параметри:", grid_search.best_params_)
+
+optimized_model = DecisionTreeRegressor(**grid_search.best_params_, random_state=42)
+optimized_model.fit(X_train, y_train)
+y_pred_opt = optimized_model.predict(X_test)
+print("MSE після оптимізації:", mean_squared_error(y_test, y_pred_opt))
+print("R2 Score після оптимізації:", r2_score(y_test, y_pred_opt))
+
+feature_importances = pd.DataFrame({'Feature': X.columns, 'Importance': optimized_model.feature_importances_})
+print(feature_importances.sort_values(by='Importance', ascending=False))
+
+selected_features = feature_importances[feature_importances['Importance'] > 0.01]['Feature']
+X_train_selected = X_train[selected_features]
+X_test_selected = X_test[selected_features]
+
+final_model = DecisionTreeRegressor(**grid_search.best_params_, random_state=42)
+final_model.fit(X_train_selected, y_train)
+y_pred_final = final_model.predict(X_test_selected)
+print("MSE після відбору ознак:", mean_squared_error(y_test, y_pred_final))
+print("R2 Score після відбору ознак:", r2_score(y_test, y_pred_final))
+
+print("MSE базової моделі:", mean_squared_error(y_test, y_pred))
+print("R2 Score базової моделі:", r2_score(y_test, y_pred))
+
+print("MSE після оптимізації:", mean_squared_error(y_test, y_pred_opt))
+print("R2 Score після оптимізації:", r2_score(y_test, y_pred_opt))
+
+print("MSE після відбору ознак:", mean_squared_error(y_test, y_pred_final))
+print("R2 Score після відбору ознак:", r2_score(y_test, y_pred_final))
+
