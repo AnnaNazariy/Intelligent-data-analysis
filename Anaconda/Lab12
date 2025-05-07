@@ -1,0 +1,80 @@
+!pip install scipy scikit-learn matplotlib seaborn opencv-python
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+import cv2
+
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+from sklearn.cluster import AgglomerativeClustering, DBSCAN
+from sklearn.metrics import silhouette_score, davies_bouldin_score
+from scipy.cluster.hierarchy import dendrogram, linkage
+
+data = pd.read_csv("iris.csv")
+data.dropna(inplace=True)
+X = data.select_dtypes(include=[np.number])
+scaler = SandardScaler()
+X_scaled = scaler.fit_transform(X)
+
+linked = linkage(X_scaled, method='ward')
+
+plt.figure(figsize=(15, 7))
+dendrogram(linked, truncate_mode='level', p=5)
+plt.title('Дендрограма (ієрархічна кластеризація)')
+plt.xlabel('Об\'єкти')
+plt.ylabel('Відстань')
+plt.show()
+
+hierarchical = AgglomerativeClustering(n_clusters=3, metric='euclidean', linkage='ward')
+
+labels_hierarchical = hierarchical.fit_predict(X_scaled)
+
+dbscan = DBSCAN(eps=1.5, min_samples=5)
+labels_dbscan = dbscan.fit_predict(X_scaled)
+
+pca = PCA(n_components=2)
+X_pca = pca.fit_transform(X_scaled)
+
+plt.figure(figsize=(12, 5))
+plt.subplot(1, 2, 1)
+sns.scatterplot(x=X_pca[:, 0], y=X_pca[:, 1], hue=labels_hierarchical, palette="Set1")
+plt.title("Ієрархічна кластеризація")
+
+plt.subplot(1, 2, 2)
+sns.scatterplot(x=X_pca[:, 0], y=X_pca[:, 1], hue=labels_dbscan, palette="Set2")
+plt.title("Кластеризація DBSCAN")
+plt.tight_layout()
+plt.show()
+
+print("Оцінка кластеризації (ієрархічна):")
+print(f"- Silhouette Score: {silhouette_score(X_scaled, labels_hierarchical):.4f}")
+print(f"- Davies-Bouldin Index: {davies_bouldin_score(X_scaled, labels_hierarchical):.4f}")
+
+if len(set(labels_dbscan)) > 1:
+    print("Оцінка кластеризації (DBSCAN):")
+    print(f"- Silhouette Score: {silhouette_score(X_scaled, labels_dbscan):.4f}")
+    print(f"- Davies-Bouldin Index: {davies_bouldin_score(X_scaled, labels_dbscan):.4f}")
+else:
+    print("DBSCAN знайшов лише один кластер або викиди — оцінка недоступна.")
+
+image = cv2.imread("dataset-iris.jpg")
+image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+img_small = cv2.resize(image, (100, 100))  
+pixel_values = img_small.reshape((-1, 3)).astype(float)
+
+hierarchical_img = AgglomerativeClustering(n_clusters=5)
+labels_img = hierarchical_img.fit_predict(pixel_values)
+segmented_img = np.reshape(labels_img, (img_small.shape[0], img_small.shape[1]))
+
+plt.figure(figsize=(10, 5))
+plt.subplot(1, 2, 1)
+plt.imshow(img_small)
+plt.title("Оригінальне зображення")
+
+plt.subplot(1, 2, 2)
+plt.imshow(segmented_img, cmap='rainbow')
+plt.title("Сегментоване (ієрархічна кластеризація)")
+plt.tight_layout()
+plt.show()
