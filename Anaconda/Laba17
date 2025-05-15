@@ -1,0 +1,122 @@
+from sklearn.model_selection import train_test_split
+from sklearn.naive_bayes import MultinomialNB
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import classification_report, confusion_matrix, precision_recall_curve
+from sklearn.preprocessing import LabelEncoder
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# Перевірка розподілу міток
+print(df["label_encoded"].value_counts())
+
+# 1. Кодування міток
+le = LabelEncoder()
+df["label_encoded"] = le.fit_transform(df["label"])
+
+# Перевірка після кодування
+print(df["label_encoded"].value_counts())
+
+# 2. Векторизація (використаємо ті самі очищені тексти)
+X = vectorizer.fit_transform(df["очищено"])
+y = df["label_encoded"]
+
+# 3. Розбиття на train/test (без параметра stratify, якщо класи не збалансовані)
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+# Перевірка кількості класів у y_test
+print("Кількість класів у y_test:", len(set(y_test)))
+print("Класи в y_test:", sorted(set(y_test)))
+
+# 4. Наївний Байєс
+nb = MultinomialNB()
+nb.fit(X_train, y_train)
+y_pred_nb = nb.predict(X_test)
+
+print("Naive Bayes:")
+
+# Перевіримо фактичні класи в y_test
+actual_classes = le.inverse_transform(sorted(set(y_test)))  # Отримуємо правильні мітки класів для y_test
+print("Actual classes:", actual_classes)
+
+# Перевірка класів у y_pred_nb
+predicted_classes = le.inverse_transform(sorted(set(y_pred_nb)))
+print("Predicted classes:", predicted_classes)
+
+# Перетворимо класи в рядки, якщо вони є числами
+predicted_classes = [str(cls) for cls in predicted_classes]
+actual_classes = [str(cls) for cls in actual_classes]
+
+# Використовуємо labels параметр, щоб порівняти з правильними класами
+print(classification_report(y_test, y_pred_nb, labels=sorted(set(y_pred_nb)), target_names=predicted_classes))
+
+conf_matrix_nb = confusion_matrix(y_test, y_pred_nb)
+plt.figure(figsize=(8, 6))
+sns.heatmap(conf_matrix_nb, annot=True, cmap="Blues", fmt="d", xticklabels=predicted_classes, yticklabels=predicted_classes)
+plt.title("Confusion Matrix — Naive Bayes")
+plt.xlabel("Predicted")
+plt.ylabel("True")
+plt.show()
+
+# Precision-Recall
+plt.figure(figsize=(8, 6))
+for class_index in range(len(nb.classes_)):  # Змінюємо, щоб індекси не виходили за межі
+    y_true_bin = (y_test == class_index)
+    y_score = nb.predict_proba(X_test)[:, class_index]
+    if any(y_true_bin):
+        precision, recall, _ = precision_recall_curve(y_true_bin, y_score)
+        plt.plot(recall, precision, label=le.inverse_transform([class_index])[0])
+plt.xlabel("Recall")
+plt.ylabel("Precision")
+plt.title("PR-криві — Naive Bayes")
+plt.legend()
+plt.show()
+
+
+# 5. Логістична регресія
+lr = LogisticRegression(max_iter=1000)
+lr.fit(X_train, y_train)
+y_pred_lr = lr.predict(X_test)
+
+print("Logistic Regression:")
+
+# Перевіримо фактичні класи в y_test
+actual_classes = le.inverse_transform(sorted(set(y_test)))  # Отримуємо правильні мітки класів для y_test
+print("Actual classes:", actual_classes)
+
+# Перевірка класів у y_pred_lr
+predicted_classes = le.inverse_transform(sorted(set(y_pred_lr)))
+print("Predicted classes:", predicted_classes)
+
+# Перетворимо класи в рядки, якщо вони є числами
+predicted_classes = [str(cls) for cls in predicted_classes]
+actual_classes = [str(cls) for cls in actual_classes]
+
+# Використовуємо labels параметр, щоб порівняти з правильними класами
+print(classification_report(y_test, y_pred_lr, labels=sorted(set(y_pred_lr)), target_names=predicted_classes, zero_division=0))
+
+
+conf_matrix_lr = confusion_matrix(y_test, y_pred_lr)
+plt.figure(figsize=(8, 6))
+sns.heatmap(conf_matrix_lr, annot=True, cmap="Blues", fmt="d", xticklabels=predicted_classes, yticklabels=predicted_classes)
+plt.title("Confusion Matrix — Logistic Regression")
+plt.xlabel("Predicted")
+plt.ylabel("True")
+plt.show()
+
+# Precision-Recall
+plt.figure(figsize=(8, 6))
+for class_index in range(len(lr.classes_)):  # Змінюємо, щоб індекси не виходили за межі
+    y_true_bin = (y_test == class_index)
+    y_score = lr.predict_proba(X_test)[:, class_index]
+    if any(y_true_bin):
+        precision, recall, _ = precision_recall_curve(y_true_bin, y_score)
+        plt.plot(recall, precision, label=le.inverse_transform([class_index])[0])
+plt.xlabel("Recall")
+plt.ylabel("Precision")
+plt.title("PR-криві — Logistic Regression")
+plt.legend()
+plt.show()
+
+
+
+
+
