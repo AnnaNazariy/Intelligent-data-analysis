@@ -1,0 +1,146 @@
+!pip install mlxtend
+!pip install tabulate
+
+import pandas as pd
+import ast
+import time
+from collections import defaultdict
+from itertools import combinations
+from mlxtend.preprocessing import TransactionEncoder
+from mlxtend.frequent_patterns import apriori, fpgrowth, association_rules
+import matplotlib.pyplot as plt
+import seaborn as sns
+from tabulate import tabulate  # для гарного друку
+
+pd.set_option('display.max_columns', None)
+pd.set_option('display.width', 120)
+pd.set_option('display.colheader_justify', 'center')
+
+print("Завдання 1-2 (Лабораторна 14): Завантаження і підготовка даних")
+df = pd.read_csv('movies_metadata.csv', low_memory=False)
+
+def extract_genres(genre_str):
+    try:
+        genres = ast.literal_eval(genre_str)
+        return [g['name'] for g in genres]
+    except:
+        return []
+
+df['genres_list'] = df['genres'].apply(extract_genres)
+df = df[df['genres_list'].map(len) > 0]
+transactions = df['genres_list'].tolist()
+print("Кількість транзакцій:", len(transactions))
+
+#  Підготовка для алгоритмів
+te = TransactionEncoder()
+te_ary = te.fit(transactions).transform(transactions)
+df_encoded = pd.DataFrame(te_ary, columns=te.columns_)
+
+# -------------------
+print("\nЗавдання 3: Apriori")
+start = time.time()
+frequent_itemsets_apriori = apriori(df_encoded, min_support=0.01, use_colnames=True)
+rules_apriori = association_rules(frequent_itemsets_apriori, metric="lift", min_threshold=1.0)
+apriori_time = round(time.time() - start, 2)
+print(f"⏱ Час виконання Apriori: {apriori_time} сек")
+
+print(tabulate(rules_apriori[['antecedents', 'consequents', 'support', 'confidence', 'lift']].head(10), headers='keys', tablefmt='pretty'))
+
+# -------------------
+print("\nЗавдання 4: FP-growth")
+start = time.time()
+frequent_itemsets_fp = fpgrowth(df_encoded, min_support=0.01, use_colnames=True)
+rules_fp = association_rules(frequent_itemsets_fp, metric="lift", min_threshold=1.0)
+fp_time = round(time.time() - start, 2)
+print(f"⏱ Час виконання FP-growth: {fp_time} сек")
+
+print(tabulate(rules_fp[['antecedents', 'consequents', 'support', 'confidence', 'lift']].head(10), headers='keys', tablefmt='pretty'))
+
+# -------------------
+print("\nЗавдання 5: Eclat (ручна реалізація)")
+def eclat(transactions, min_support=0.01):
+    item_tidset = defaultdict(set)
+    for tid, transaction in enumerate(transactions):
+        for item in transaction:
+            item_tidset[frozenset([item])].add(tid)
+
+    def intersect(tidsets):
+        return set.intersection(*tidsets)
+
+    minsup_count = min_support * len(transactions)
+    freq_itemsets = {}
+
+    def recursive_eclat(prefix, items):
+        while items:
+            item = items.pop()
+            new_itemset = prefix.union(item)
+            tids = item_tidset[item]
+            if len(tids) >= minsup_count:
+                freq_itemsets[frozenset(new_itemset)] = tids
+                suffix_items = []
+                for other in items:
+                    intersected = tids & item_tidset[other]
+                    if len(intersected) >= minsup_count:
+                        item_tidset[frozenset(new_itemset.union(other))] = intersected
+                        suffix_items.append(other)
+                recursive_eclat(new_itemset, suffix_items)
+
+    items = list(item_tidset.keys())
+    recursive_eclat(frozenset(), items)
+
+    return {tuple(k): len(v)/len(transactions) for k, v in freq_itemsets.items()}
+
+start = time.time()
+eclat_result = eclat(transactions)
+eclat_time = round(time.time() - start, 2)
+print(f"⏱ Час виконання Eclat: {eclat_time} сек")
+
+eclat_df = pd.DataFrame(list(eclat_result.items()), columns=['Itemset', 'Support']).sort_values(by='Support', ascending=False)
+print(tabulate(eclat_df.head(10), headers='keys', tablefmt='pretty'))
+
+# -------------------
+print("\n Завдання 6(15): Оцінка якості правил")
+def eval_rules(rules):
+    return {
+        'Середня підтримка': round(rules['support'].mean(), 4),
+        'Середня довіра': round(rules['confidence'].mean(), 4),
+        'Середній підйом (lift)': round(rules['lift'].mean(), 4),
+        'Кількість правил': len(rules)
+    }
+
+metrics_apriori = eval_rules(rules_apriori)
+metrics_fp = eval_rules(rules_fp)
+
+print("\nApriori:")
+print(tabulate(metrics_apriori.items(), tablefmt='fancy_grid'))
+
+print("\nFP-growth:")
+print(tabulate(metrics_fp.items(), tablefmt='fancy_grid'))
+
+# -------------------
+print("\nЗавдання 7: Видалення надлишкових правил")
+rules_apriori_filtered = rules_apriori[rules_apriori['lift'] > 1.2].drop_duplicates(subset=['antecedents', 'consequents'])
+rules_fp_filtered = rules_fp[rules_fp['lift'] > 1.2].drop_duplicates(subset=['antecedents', 'consequents'])
+
+print(f"Apriori (фільтровано): {len(rules_apriori_filtered)} правил")
+print(f"FP-growth (фільтровано): {len(rules_fp_filtered)} правил")
+
+# -------------------
+print("\nЗавдання 8: Візуалізація")
+plt.figure(figsize=(10,6))
+sns.scatterplot(
+    data=rules_apriori_filtered, 
+    x='support', 
+    y='confidence', 
+    size='lift', 
+    alpha=0.6,
+    legend=False
+)
+plt.title('Apriori Rules: Support vs Confidence')
+plt.xlabel('Support')
+plt.ylabel('Confidence')
+plt.grid(True)
+plt.tight_layout()
+plt.show()
+
+
