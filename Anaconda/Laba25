@@ -1,0 +1,276 @@
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
+from sklearn.ensemble import (RandomForestClassifier, VotingClassifier, 
+                             StackingClassifier, BaggingClassifier, 
+                             AdaBoostClassifier, GradientBoostingClassifier)
+from sklearn.linear_model import LogisticRegression
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.svm import SVC
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.metrics import accuracy_score
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# Завдання 1: Завантаження даних
+print("=== Завдання 1: Завантаження даних ===")
+data = pd.read_csv('HeartDiseaseTrain-Test.csv')
+print(f"Дані завантажено. Розмірність: {data.shape}\n")
+
+# Завдання 2: Підготовка даних
+print("=== Завдання 2: Підготовка даних ===")
+
+# Визначення типів ознак
+categorical_features = ['sex', 'chest_pain_type', 'fasting_blood_sugar', 
+                       'rest_ecg', 'exercise_induced_angina', 'slope', 
+                       'vessels_colored_by_flourosopy', 'thalassemia']
+numeric_features = ['age', 'resting_blood_pressure', 'cholestoral', 
+                   'Max_heart_rate', 'oldpeak']
+
+# Попередня обробка даних
+preprocessor = ColumnTransformer(
+    transformers=[
+        ('num', StandardScaler(), numeric_features),
+        ('cat', OneHotEncoder(handle_unknown='ignore'), categorical_features)
+    ])
+
+# Розділення даних
+X = data.drop('target', axis=1)
+y = data['target']
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42, stratify=y)
+
+print("Дані підготовлено. Розміри:")
+print(f"X_train: {X_train.shape}, X_test: {X_test.shape}\n")
+
+# Завдання 3: Паралельний гетерогенний ансамбль
+print("=== Завдання 3: Паралельний гетерогенний ансамбль ===")
+
+# Визначення базових моделей
+models = [
+    ('lr', LogisticRegression(max_iter=1000, random_state=42)),
+    ('rf', RandomForestClassifier(random_state=42)),
+    ('svm', SVC(probability=True, random_state=42)),
+    ('knn', KNeighborsClassifier())
+]
+
+# Створення пайплайнів для кожної моделі
+model_pipelines = []
+for name, model in models:
+    pipeline = Pipeline([
+        ('preprocessor', preprocessor),
+        ('classifier', model)
+    ])
+    model_pipelines.append((name, pipeline))
+    pipeline.fit(X_train, y_train)
+    y_pred = pipeline.predict(X_test)
+    print(f"{name} Accuracy: {accuracy_score(y_test, y_pred):.4f}")
+
+# Створення паралельного ансамблю (Voting)
+voting_clf = Pipeline([
+    ('preprocessor', preprocessor),
+    ('classifier', VotingClassifier(
+        estimators=models,
+        voting='soft'))
+])
+
+voting_clf.fit(X_train, y_train)
+y_pred_voting = voting_clf.predict(X_test)
+print(f"\nVoting Classifier Accuracy: {accuracy_score(y_test, y_pred_voting):.4f}\n")
+
+# Завдання 4: Методи інтеграції прогнозів
+print("=== Завдання 4: Методи інтеграції прогнозів ===")
+
+# Функція для отримання прогнозів
+def get_predictions(pipelines, X):
+    preds = []
+    for name, pipeline in pipelines:
+        if hasattr(pipeline.named_steps['classifier'], 'predict_proba'):
+            pred = pipeline.predict_proba(X)[:, 1]
+        else:
+            pred = pipeline.predict(X)
+        preds.append(pred)
+    return np.array(preds).T
+
+train_preds = get_predictions(model_pipelines, X_train)
+test_preds = get_predictions(model_pipelines, X_test)
+
+# Простий метод: Weighted Averaging
+print("\nWeighted Averaging Method:")
+weights = [0.2, 0.4, 0.3, 0.1]  # Приклад ваг
+weighted_avg_pred = np.average(test_preds, axis=1, weights=weights)
+weighted_avg_pred_binary = (weighted_avg_pred > 0.5).astype(int)
+print(f"Weighted Averaging Accuracy: {accuracy_score(y_test, weighted_avg_pred_binary):.4f}")
+
+#Складний метод: Stacking
+print("\nStacking Method:")
+
+stacking_clf = Pipeline([
+    ('preprocessor', preprocessor),
+    ('classifier', StackingClassifier(
+        estimators=models,
+        final_estimator=LogisticRegression(),
+        cv=5))
+])
+
+stacking_clf.fit(X_train, y_train)
+y_pred_stacking = stacking_clf.predict(X_test)
+print(f"Stacking Classifier Accuracy: {accuracy_score(y_test, y_pred_stacking):.4f}\n")
+
+# Завдання 5: Підбір оптимальних параметрів
+print("=== Завдання 5: Підбір параметрів для ансамблю ===")
+
+param_grid = {
+    'classifier__voting': ['soft', 'hard'],
+    'classifier__weights': [
+        [1, 1, 1, 1],
+        [1, 2, 1, 1],
+        [2, 1, 1, 1],
+        [1, 1, 2, 1],
+        [1, 1, 1, 2]
+    ]
+}
+
+grid_search = GridSearchCV(voting_clf, param_grid, cv=5, scoring='accuracy')
+grid_search.fit(X_train, y_train)
+
+print("Найкращі параметри:", grid_search.best_params_)
+print(f"Найкраща точність: {grid_search.best_score_:.4f}\n")
+
+# Завдання 6: Важливість ознак
+print("=== Завдання 6: Аналіз важливості ознак ===")
+
+# Отримання важливості ознак з Random Forest
+rf = model_pipelines[1][1].named_steps['classifier']
+feature_importances = rf.feature_importances_
+
+# Отримання назв ознак
+cat_encoder = preprocessor.named_transformers_['cat']
+cat_features = cat_encoder.get_feature_names_out(categorical_features)
+all_features = np.concatenate([numeric_features, cat_features])
+
+# Створення DataFrame
+importance_df = pd.DataFrame({
+    'Feature': all_features,
+    'Importance': feature_importances
+}).sort_values('Importance', ascending=False)
+
+print("Топ-10 найважливіших ознак:")
+print(importance_df.head(10))
+
+# Візуалізація
+plt.figure(figsize=(12, 8))
+sns.barplot(x='Importance', y='Feature', data=importance_df.head(20))
+plt.title('Важливість ознак (Random Forest)')
+plt.tight_layout()
+plt.show()
+
+# Завдання 7: N-рівневий гетерогенний ансамбль (виправлена версія)
+print("\n=== Завдання 7: N-рівневий гетерогенний ансамбль ===")
+
+# Розділення тренувальних даних для мета-моделі
+X_train_base, X_val, y_train_base, y_val = train_test_split(
+    X_train, y_train, test_size=0.3, random_state=42, stratify=y_train
+)
+
+# Визначення моделей різних рівнів
+level1_models = [
+    ('bagging', BaggingClassifier(
+        estimator=DecisionTreeClassifier(),
+        n_estimators=50,
+        random_state=42)),
+    ('boosting', GradientBoostingClassifier(
+        n_estimators=100,
+        random_state=42)),
+    ('stacking', StackingClassifier(
+        estimators=[
+            ('lr', LogisticRegression()),
+            ('svm', SVC(probability=True)),
+            ('knn', KNeighborsClassifier())],
+        final_estimator=RandomForestClassifier()))
+]
+
+# Навчання моделей першого рівня на базовому наборі
+level1_pipelines = []
+for name, model in level1_models:
+    pipeline = Pipeline([
+        ('preprocessor', preprocessor),
+        ('model', model)
+    ])
+    pipeline.fit(X_train_base, y_train_base)
+    level1_pipelines.append((name, pipeline))
+
+# Генерація мета-ознак
+meta_features = []
+for name, pipeline in level1_pipelines:
+    pred = pipeline.predict_proba(X_val)[:, 1]
+    meta_features.append(pred)
+meta_features = np.column_stack(meta_features)
+
+# Навчання мета-моделі
+meta_model = LogisticRegression()
+meta_model.fit(meta_features, y_val)
+
+for name, pipeline in level1_pipelines:
+    pipeline.fit(X_train, y_train)
+
+# Прогнозування на тестовому наборі
+test_meta_features = []
+for name, pipeline in level1_pipelines:
+    pred = pipeline.predict_proba(X_test)[:, 1]
+    test_meta_features.append(pred)
+test_meta_features = np.column_stack(test_meta_features)
+
+# Фінальний прогноз
+final_pred = meta_model.predict(test_meta_features)
+print(f"Multi-level Ensemble Accuracy: {accuracy_score(y_test, final_pred):.4f}\n")
+
+# Завдання 8: Послідовний гетерогенний ансамбль
+print("=== Завдання 8: Послідовний гетерогенний ансамбль ===")
+
+base_models = [
+    ('knn', KNeighborsClassifier()),
+    ('dt', DecisionTreeClassifier(random_state=42)),
+    ('svm', SVC(probability=True, random_state=42))
+]
+
+final_model = RandomForestClassifier(n_estimators=100, random_state=42)
+
+sequential_ensemble = Pipeline([
+    ('preprocessor', preprocessor),
+    ('stacking', StackingClassifier(
+        estimators=base_models,
+        final_estimator=final_model,
+        cv=5))
+])
+
+sequential_ensemble.fit(X_train, y_train)
+y_pred_seq = sequential_ensemble.predict(X_test)
+print(f"Sequential Ensemble Accuracy: {accuracy_score(y_test, y_pred_seq):.4f}\n")
+
+# Порівняння всіх моделей
+print("=== Порівняння всіх моделей ===")
+results = {
+    'Logistic Regression': accuracy_score(y_test, model_pipelines[0][1].predict(X_test)),
+    'Random Forest': accuracy_score(y_test, model_pipelines[1][1].predict(X_test)),
+    'SVM': accuracy_score(y_test, model_pipelines[2][1].predict(X_test)),
+    'KNN': accuracy_score(y_test, model_pipelines[3][1].predict(X_test)),
+    'Voting Ensemble': accuracy_score(y_test, y_pred_voting),
+    'Stacking Ensemble': accuracy_score(y_test, y_pred_stacking),
+    'Multi-level Ensemble': accuracy_score(y_test, final_pred),
+    'Sequential Ensemble': accuracy_score(y_test, y_pred_seq)
+}
+
+results_df = pd.DataFrame.from_dict(results, orient='index', columns=['Accuracy'])
+print(results_df.sort_values('Accuracy', ascending=False))
+
+plt.figure(figsize=(12, 6))
+sns.barplot(x=results_df.index, y=results_df['Accuracy'])
+plt.xticks(rotation=45)
+plt.title('Порівняння точності моделей')
+plt.ylabel('Accuracy')
+plt.ylim(0.7, 1.0)
+plt.tight_layout()
+plt.show()
