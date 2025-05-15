@@ -1,0 +1,442 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from statsmodels.tsa.seasonal import seasonal_decompose
+from statsmodels.tsa.holtwinters import SimpleExpSmoothing, ExponentialSmoothing
+from statsmodels.tsa.api import STL
+from sklearn.metrics import mean_squared_error
+
+# 1. Завантаження та візуалізація даних
+print("1. Завантаження та візуалізація даних...")
+df = pd.read_csv("GlobalTemperatures.csv")
+df['dt'] = pd.to_datetime(df['dt'])
+df.set_index('dt', inplace=True)
+
+plt.figure(figsize=(15, 6))
+df['LandAverageTemperature'].plot(title='Глобальна середня температура (1750-2015)', ylabel='Температура (°C)')
+plt.grid(True)
+plt.show()
+
+# 2. Підготовка даних (оновлена версія)
+print("\n2. Підготовка даних...")
+
+# Заповнення пропущених значень
+df['LandAverageTemperature'] = df['LandAverageTemperature'].interpolate(method='time')
+
+# Створення нових часових ознак
+df['year'] = df.index.year
+df['month'] = df.index.month
+df['quarter'] = df.index.quarter
+
+# Ресамплінг до річного та місячного рівня з новими частотами
+yearly_data = df['LandAverageTemperature'].resample('YE').mean()  # 'YE' замість 'Y'
+monthly_data = df['LandAverageTemperature'].resample('ME').mean()  # 'ME' замість 'M'
+
+# 3. Аналіз сезонності (оновлена версія)
+print("\n3. Аналіз сезонності...")
+
+# Візуалізація сезонності
+plt.figure(figsize=(15, 6))
+sns.boxplot(x='month', y='LandAverageTemperature', data=df)
+plt.title('Сезонність глобальних температур за місяцями')
+plt.xlabel('Місяць')
+plt.ylabel('Середня температура (°C)')
+plt.grid(True)
+plt.show()
+
+# Додатковий аналіз сезонності
+seasonal_analysis = df.groupby('month')['LandAverageTemperature'].agg(['mean', 'std'])
+print("\nСтатистика за місяцями:")
+print(seasonal_analysis)
+
+# Візуалізація середньомісячних температур
+plt.figure(figsize=(15, 6))
+seasonal_analysis['mean'].plot(kind='bar', color='skyblue', yerr=seasonal_analysis['std'])
+plt.title('Середньомісячні температури з стандартним відхиленням')
+plt.xlabel('Місяць')
+plt.ylabel('Середня температура (°C)')
+plt.xticks(rotation=0)
+plt.grid(True, axis='y', linestyle='--', alpha=0.7)
+plt.show()
+
+# 4. Декомпозиція часового ряду
+print("\n4. Декомпозиція часового ряду...")
+decomposition_yearly = seasonal_decompose(yearly_data.dropna(), model='additive', period=5)
+decomposition_yearly.plot()
+plt.suptitle('Декомпозиція річного часового ряду')
+plt.tight_layout()
+plt.show()
+
+decomposition_monthly = seasonal_decompose(monthly_data.dropna(), model='additive', period=12)
+decomposition_monthly.plot()
+plt.suptitle('Декомпозиція місячного часового ряду')
+plt.tight_layout()
+plt.show()
+
+# 5. Аналіз залишків
+print("\n5. Аналіз залишків...")
+residuals = decomposition_monthly.resid.dropna()
+plt.figure(figsize=(15, 6))
+plt.subplot(1, 2, 1)
+plt.plot(residuals)
+plt.title("Залишки місячного ряду")
+plt.grid(True)
+plt.subplot(1, 2, 2)
+sns.histplot(residuals, kde=True)
+plt.title("Розподіл залишків")
+plt.tight_layout()
+plt.show()
+
+# 6. Фільтрація шуму
+print("\n6. Фільтрація шуму...")
+stl = STL(monthly_data.dropna(), period=12, robust=True)
+res = stl.fit()
+filtered_data = res.trend + res.seasonal
+
+clean_df = pd.DataFrame({
+    'original': monthly_data,
+    'filtered': filtered_data
+})
+
+plt.figure(figsize=(15, 6))
+plt.plot(monthly_data, label='Оригінальні дані', alpha=0.5)
+plt.plot(filtered_data, label='Очищені дані')
+plt.title('Порівняння оригінальних та очищених даних')
+plt.legend()
+plt.grid(True)
+plt.show()
+
+# 7. Згладжування часового ряду (виправлена версія)
+print("\n7. Згладжування часового ряду...")
+
+def evaluate_holtwinters(train, test, periods):
+    try:
+        # Перевірка достатньої довжини ряду
+        if len(train) < 2*periods:
+            return None, None, np.inf
+            
+        # Ручна ініціалізація параметрів
+        initial_level = train.iloc[0]
+        initial_trend = (train.iloc[1] - train.iloc[0]) if len(train) > 1 else 0
+        
+        # Обчислення початкових сезонних компонентів
+        seasonal_init = []
+        for i in range(periods):
+            if i < len(train):
+                seasonal_init.append(train.iloc[i] - initial_level - i*initial_trend)
+            else:
+                seasonal_init.append(0)
+        
+        model = ExponentialSmoothing(
+            train,
+            trend='add',
+            seasonal='add',
+            seasonal_periods=periods,
+            initialization_method="known",
+            initial_level=initial_level,
+            initial_trend=initial_trend,
+            initial_seasonal=seasonal_init
+        ).fit(
+            smoothing_level=0.3,  # Фіксовані значення
+            smoothing_trend=0.1,
+            smoothing_seasonal=0.1,
+            optimized=False
+        )
+        
+        pred = model.forecast(len(test))
+        mse = mean_squared_error(test, pred)
+        return model, pred, mse
+    except Exception as e:
+        print(f"Помилка у Holt-Winters: {e}")
+        return None, None, np.inf
+
+# Оцінка моделей
+results = {}
+
+# 1. Просте експоненційне згладжування
+print("\nПросте експоненційне згладжування...")
+best_ses_mse = np.inf
+for alpha in [0.1, 0.3, 0.5, 0.7, 0.9]:
+    model = SimpleExpSmoothing(train).fit(smoothing_level=alpha, optimized=False)
+    pred = model.forecast(len(test))
+    mse = mean_squared_error(test, pred)
+    if mse < best_ses_mse:
+        best_ses_mse = mse
+        best_ses_alpha = alpha
+
+results['SES'] = {'alpha': best_ses_alpha, 'mse': best_ses_mse}
+
+# 2. Метод Холта
+print("\nМетод Холта...")
+best_holt_mse = np.inf
+for trend in ['add']:
+    for alpha in [0.1, 0.3, 0.5]:
+        for beta in [0.1, 0.3, 0.5]:
+            model = ExponentialSmoothing(
+                train,
+                trend=trend,
+                initialization_method="heuristic"
+            ).fit(
+                smoothing_level=alpha,
+                smoothing_trend=beta,
+                optimized=False
+            )
+            pred = model.forecast(len(test))
+            mse = mean_squared_error(test, pred)
+            if mse < best_holt_mse:
+                best_holt_mse = mse
+                best_holt_params = {'trend': trend, 'alpha': alpha, 'beta': beta}
+
+results['Holt'] = {**best_holt_params, 'mse': best_holt_mse}
+
+# 3. Метод Холта-Вінтерса
+print("\nМетод Холта-Вінтерса...")
+best_hw_mse = np.inf
+for periods in [10]:  # Використовуємо оптимальний період
+    _, _, mse = evaluate_holtwinters(train, test, periods)
+    if mse < best_hw_mse:
+        best_hw_mse = mse
+        best_hw_params = {'seasonal': 'add', 'periods': periods}
+
+results['Holt-Winters'] = {**best_hw_params, 'mse': best_hw_mse}
+
+print("\nОптимальні параметри моделей:")
+for model, params in results.items():
+    print(f"{model}: {params}")
+
+# 8. Прогнозування (виправлена версія)
+print("\n8. Прогнозування...")
+
+def create_holtwinters_model(data, periods):
+    try:
+        if len(data) < 2*periods:
+            return None
+            
+        initial_level = data.iloc[0]
+        initial_trend = (data.iloc[1] - data.iloc[0]) if len(data) > 1 else 0
+        
+        seasonal_init = []
+        for i in range(periods):
+            if i < len(data):
+                seasonal_init.append(data.iloc[i] - initial_level - i*initial_trend)
+            else:
+                seasonal_init.append(0)
+        
+        return ExponentialSmoothing(
+            data,
+            trend='add',
+            seasonal='add',
+            seasonal_periods=periods,
+            initialization_method="known",
+            initial_level=initial_level,
+            initial_trend=initial_trend,
+            initial_seasonal=seasonal_init
+        ).fit(
+            smoothing_level=0.3,
+            smoothing_trend=0.1,
+            smoothing_seasonal=0.1,
+            optimized=False
+        )
+    except Exception as e:
+        print(f"Помилка при створенні Holt-Winters: {e}")
+        return None
+
+# Створення моделей для прогнозування
+forecast_models = {
+    'SES': SimpleExpSmoothing(yearly_data).fit(
+        smoothing_level=results['SES']['alpha'],
+        optimized=False
+    ),
+    'Holt': ExponentialSmoothing(
+        yearly_data,
+        trend=results['Holt']['trend'],
+        initialization_method="heuristic"
+    ).fit(
+        smoothing_level=results['Holt']['alpha'],
+        smoothing_trend=results['Holt']['beta'],
+        optimized=False
+    ),
+    'Holt-Winters': create_holtwinters_model(
+        yearly_data, 
+        results['Holt-Winters']['periods']
+    )
+}
+
+# Прогнозування
+forecasts = {}
+for name, model in forecast_models.items():
+    if model:
+        forecasts[name] = model.forecast(10)
+    else:
+        forecasts[name] = None
+        print(f"Не вдалося створити модель {name} для прогнозу")
+
+# Візуалізація
+plt.figure(figsize=(15, 6))
+yearly_data.plot(label='Історичні дані', legend=True)
+for name, pred in forecasts.items():
+    if pred is not None:
+        pred.plot(label=f'{name} прогноз', legend=True)
+plt.title('Прогноз глобальних температур')
+plt.ylabel('Температура (°C)')
+plt.grid(True)
+plt.show()
+
+# 9. Оцінка якості прогнозів (виправлена версія)
+print("\n9. Оцінка якості прогнозів...")
+
+def cross_validate(ts, model_type, n_splits=5, **kwargs):
+    mses = []
+    for i in range(n_splits):
+        split = int(len(ts) * (i+1)/(n_splits+1))
+        train, test = ts.iloc[:split], ts.iloc[split:split+10]
+        
+        try:
+            if model_type == 'SES':
+                model = SimpleExpSmoothing(train).fit(
+                    smoothing_level=kwargs.get('alpha'),
+                    optimized=False
+                )
+            elif model_type == 'Holt':
+                model = ExponentialSmoothing(
+                    train,
+                    trend=kwargs.get('trend'),
+                    initialization_method='heuristic'
+                ).fit(
+                    smoothing_level=kwargs.get('alpha'),
+                    smoothing_trend=kwargs.get('beta'),
+                    optimized=False
+                )
+            else:  # Holt-Winters
+                # Перевірка достатньої довжини ряду для сезонності
+                if len(train) < 2*kwargs.get('periods', 12):
+                    continue
+                
+                model = ExponentialSmoothing(
+                    train,
+                    trend='add',
+                    seasonal=kwargs.get('seasonal'),
+                    seasonal_periods=kwargs.get('periods'),
+                    initialization_method='heuristic'
+                ).fit(
+                    smoothing_level=0.3,
+                    smoothing_trend=0.1,
+                    smoothing_seasonal=0.1,
+                    optimized=False
+                )
+            
+            pred = model.forecast(len(test))
+            mses.append(mean_squared_error(test, pred))
+        except Exception as e:
+            print(f"Помилка при кросс-валідації {model_type}: {e}")
+            continue
+    
+    return np.mean(mses) if mses else np.inf
+
+# Оцінка моделей
+cv_results = {}
+for name, params in results.items():
+    if name == 'SES':
+        cv_mse = cross_validate(yearly_data, 'SES', alpha=params['alpha'])
+    elif name == 'Holt':
+        cv_mse = cross_validate(
+            yearly_data, 'Holt',
+            trend=params['trend'],
+            alpha=params['alpha'],
+            beta=params['beta']
+        )
+    else:
+        cv_mse = cross_validate(
+            yearly_data, 'HW',
+            seasonal=params['seasonal'],
+            periods=params['periods']
+        )
+    cv_results[name] = cv_mse
+
+print("\nРезультати крос-валідації:")
+for name, mse in cv_results.items():
+    print(f"{name}: MSE = {mse:.4f}")
+
+# 10. Порівняння результатів (виправлена версія)
+print("\n10. Порівняння результатів для сирих та очищених даних...")
+
+def train_holtwinters(data, periods):
+    try:
+        if len(data) < 2*periods:
+            return None
+            
+        model = ExponentialSmoothing(
+            data,
+            trend='add',
+            seasonal='add',
+            seasonal_periods=periods,
+            initialization_method='heuristic'
+        ).fit(
+            smoothing_level=0.3,
+            smoothing_trend=0.1,
+            smoothing_seasonal=0.1,
+            optimized=False
+        )
+        return model
+    except Exception as e:
+        print(f"Помилка при навчанні Holt-Winters: {e}")
+        return None
+
+clean_yearly = clean_df['filtered'].resample('YE').mean().dropna()
+split_idx = int(len(clean_yearly) * 0.8)
+train_clean, test_clean = clean_yearly.iloc[:split_idx], clean_yearly.iloc[split_idx:]
+
+clean_results = {}
+for name, params in results.items():
+    if name == 'SES':
+        model = SimpleExpSmoothing(train_clean).fit(
+            smoothing_level=params['alpha'],
+            optimized=False
+        )
+    elif name == 'Holt':
+        model = ExponentialSmoothing(
+            train_clean,
+            trend=params['trend'],
+            initialization_method='heuristic'
+        ).fit(
+            smoothing_level=params['alpha'],
+            smoothing_trend=params['beta'],
+            optimized=False
+        )
+    else:
+        model = train_holtwinters(train_clean, params['periods'])
+    
+    if model:
+        pred = model.forecast(len(test_clean))
+        mse = mean_squared_error(test_clean, pred)
+        clean_results[name] = mse
+    else:
+        clean_results[name] = np.inf
+
+# Виведення результатів з перевіркою наявності ключів
+print("\nПорівняння якості моделей:")
+print(f"{'Модель':<15} {'MSE (сирі)':<12} {'MSE (очищені)':<12}")
+print("-"*40)
+for name in results:
+    mse_raw = results[name].get('mse', np.inf)
+    mse_clean = clean_results.get(name, np.inf)
+    print(f"{name:<15} {mse_raw:<12.4f} {mse_clean:<12.4f}")
+
+# Візуалізація
+models = [m for m in results if m in clean_results]
+mse_raw = [results[m].get('mse', np.inf) for m in models]
+mse_clean = [clean_results[m] for m in models]
+
+plt.figure(figsize=(12, 6))
+x = np.arange(len(models))
+width = 0.35
+plt.bar(x - width/2, mse_raw, width, label='Сирі дані')
+plt.bar(x + width/2, mse_clean, width, label='Очищені дані')
+plt.xlabel('Моделі')
+plt.ylabel('MSE')
+plt.title('Порівняння якості моделей')
+plt.xticks(x, models)
+plt.legend()
+plt.grid(True, axis='y', linestyle='--', alpha=0.7)
+plt.show()
