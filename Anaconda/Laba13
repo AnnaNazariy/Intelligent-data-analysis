@@ -1,0 +1,141 @@
+!pip install scikit-learn matplotlib seaborn opencv-python
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+import cv2
+
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import classification_report, accuracy_score
+from sklearn.pipeline import Pipeline
+
+df = pd.read_csv("train_and_test2.csv")
+df.rename(columns={"2urvived": "target"}, inplace=True)
+df = df.loc[:, ~df.columns.str.contains('^zero')]  #
+df.dropna(inplace=True)
+df = pd.get_dummies(df, columns=['Sex', 'Embarked'], drop_first=True)  
+
+X = df.drop("target", axis=1)
+y = df["target"]
+
+# 3. Масштабування
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X)
+
+# 4. PCA
+pca = PCA()
+X_pca = pca.fit_transform(X_scaled)
+
+# Кумулятивна дисперсія
+explained_var = pca.explained_variance_ratio_
+cum_var = np.cumsum(explained_var)
+
+plt.figure(figsize=(10, 6))
+plt.plot(range(1, len(cum_var)+1), cum_var, marker='o')
+plt.axhline(y=0.9, color='r', linestyle='--')
+plt.title("Кумулятивна дисперсія PCA")
+plt.xlabel("Кількість компонент")
+plt.ylabel("Кумулятивна дисперсія")
+plt.grid(True)
+plt.show()
+
+# 5. Виведення характеристик PCA
+print(f"Власні значення: {pca.explained_variance_}")
+print(f"Відсоток кумулятивної дисперсії: {cum_var}")
+
+# 6. Оптимальна кількість компонент
+optimal_components = np.argmax(cum_var >= 0.9) + 1
+print(f"\nОптимальна кількість компонент: {optimal_components}")
+
+# 7. Класифікація без PCA
+X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
+clf = RandomForestClassifier(random_state=42)
+clf.fit(X_train, y_train)
+y_pred = clf.predict(X_test)
+print("\nКласифікація без PCA:")
+print(classification_report(y_test, y_pred))
+print("Accuracy:", accuracy_score(y_test, y_pred))
+
+# 8. Класифікація з PCA
+pca = PCA(n_components=optimal_components)
+X_pca_final = pca.fit_transform(X_scaled)
+X_train_pca, X_test_pca, y_train, y_test = train_test_split(X_pca_final, y, test_size=0.2, random_state=42)
+clf_pca = RandomForestClassifier(random_state=42)
+clf_pca.fit(X_train_pca, y_train)
+y_pred_pca = clf_pca.predict(X_test_pca)
+print("\nКласифікація з PCA:")
+print(classification_report(y_test, y_pred_pca))
+print("Accuracy:", accuracy_score(y_test, y_pred_pca))
+
+# 9. Конвеєр
+pipe = Pipeline([
+    ("scaler", StandardScaler()),
+    ("pca", PCA(n_components=optimal_components)),
+    ("clf", RandomForestClassifier(random_state=42))
+])
+pipe.fit(X_train, y_train)
+print("\nОцінка моделі з конвеєром:")
+print("Accuracy:", accuracy_score(y_test, pipe.predict(X_test)))
+
+# 10. Завантаження зображення
+img = cv2.imread("tutanik.jpg")
+img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+img_small = cv2.resize(img_rgb, (300, 300))
+
+# Додавання шуму
+noise = np.random.normal(0, 25, img_small.shape).astype(np.float32)  
+img_float = img_small.astype(np.float32)
+img_noisy = np.clip(img_float + noise, 0, 255).astype(np.uint8) 
+
+# Перетворення на вектор для PCA
+pixels = img_noisy.reshape(-1, 3).astype(np.float32)
+
+# 11. PCA для зображення
+pca_img = PCA(n_components=3)
+pixels_pca = pca_img.fit_transform(pixels)
+
+# Відновлення після PCA
+pixels_reconstructed = pca_img.inverse_transform(pixels_pca)
+img_denoised = np.clip(pixels_reconstructed.reshape(img_small.shape), 0, 255).astype(np.uint8)
+
+# 12. Відображення зображень
+plt.figure(figsize=(15, 5))
+
+plt.subplot(1, 3, 1)
+plt.imshow(img_small)
+plt.title("Оригінал")
+plt.axis("off")
+
+plt.subplot(1, 3, 2)
+plt.imshow(img_noisy)
+plt.title("Шумне зображення")
+plt.axis("off")
+
+plt.subplot(1, 3, 3)
+plt.imshow(img_denoised)
+plt.title("Після PCA")
+plt.axis("off")
+
+plt.tight_layout()
+plt.show()
+
+
+# 13. Виведення характеристик PCA
+print(f"Власні значення: {pca_img.explained_variance_}")
+print(f"Відсоток кумулятивної дисперсії: {np.cumsum(pca_img.explained_variance_ratio_)}")
+
+# Фінальні результати
+final_comparison = pd.DataFrame({
+    "Метод": ["Без PCA", "З PCA", "Конвеєр"],
+    "Точність (Accuracy)": [
+        accuracy_score(y_test, y_pred),
+        accuracy_score(y_test, y_pred_pca),
+        accuracy_score(y_test, pipe.predict(X_test))
+    ]
+})
+
+print("\nФінальні результати:")
+print(final_comparison.to_markdown(tablefmt="grid"))
