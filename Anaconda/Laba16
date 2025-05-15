@@ -1,0 +1,129 @@
+import os
+os.environ["LOKY_MAX_CPU_COUNT"] = "8"
+
+import warnings 
+warnings.filterwarnings("ignore", category=UserWarning, module='joblib')
+
+import pandas as pd
+import re
+import string
+import matplotlib.pyplot as plt
+import seaborn as sns
+import spacy
+import nltk
+from nltk.corpus import stopwords
+from nltk.stem import PorterStemmer
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.cluster import KMeans
+from wordcloud import WordCloud
+
+# Завантаження ресурсів NLTK
+nltk.download('punkt')
+nltk.download('stopwords')
+
+# Ініціалізація
+nlp = spacy.load("en_core_web_sm")
+stemmer = PorterStemmer()
+stop_words = set(stopwords.words("english"))
+
+# 1. Завантаження даних з Excel
+df = pd.read_excel("rew.xlsx")
+df = df[["review", "label", "type", "file"]].dropna().reset_index(drop=True)
+
+print(f" Загальна кількість відгуків: {len(df)}")
+print("\n Перші 5 рядків:")
+print(df.head())
+
+# 2. Попередня обробка тексту
+def clean_text(text):
+    text = text.lower()
+    text = re.sub(r'\d+', '', text)
+    text = text.translate(str.maketrans('', '', string.punctuation))
+    doc = nlp(text)
+    tokens = []
+    for token in doc:
+        if token.text in stop_words or token.is_stop or token.is_punct:
+            continue
+        lemma = token.lemma_.lower()
+        if lemma.isalpha() and len(lemma) > 2:
+            stem = stemmer.stem(lemma)
+            tokens.append(stem)
+    return " ".join(tokens)
+
+df["очищено"] = df["review"].apply(clean_text)
+
+print("\n Очищені тексти (перші 5):")
+print(df[["review", "очищено"]].head())
+
+# 3. Частота слів
+всі_слова = " ".join(df["очищено"]).split()
+частота = nltk.FreqDist(всі_слова)
+поширені = частота.most_common(20)
+рідкісні = частота.most_common()[-20:]
+
+# Таблиця частот у консолі
+print("\n Найпоширеніші слова:")
+for слово, кількість in поширені:
+    print(f"{слово}: {кількість}")
+
+print("\n Найрідкісніші слова:")
+for слово, кількість in рідкісні:
+    print(f"{слово}: {кількість}")
+
+# Графіки
+plt.figure(figsize=(12, 5))
+sns.barplot(x=[x[1] for x in поширені], y=[x[0] for x in поширені])
+plt.title("Найпоширеніші слова")
+plt.xlabel("Частота")
+plt.ylabel("Слово")
+plt.show()
+
+plt.figure(figsize=(12, 5))
+sns.barplot(x=[x[1] for x in рідкісні], y=[x[0] for x in рідкісні])
+plt.title("Найрідкісніші слова")
+plt.xlabel("Частота")
+plt.ylabel("Слово")
+plt.show()
+
+# 4. Векторизація + кластеризація
+vectorizer = TfidfVectorizer(ngram_range=(1,1), max_df=1.0, min_df=1)
+X = vectorizer.fit_transform(df["очищено"])
+
+kmeans = KMeans(n_clusters=3, random_state=42)
+df['кластер'] = kmeans.fit_predict(X)
+
+# 5. Результати кластеризації
+print("\n Результати кластеризації:")
+print(df[["label", "кластер", "review"]].head(10))
+
+# Кількість відгуків у кожному кластері
+print("\n Кількість відгуків у кожному кластері:")
+print(df["кластер"].value_counts())
+
+# Графік кластерів
+sns.countplot(data=df, x="кластер")
+plt.title("Розподіл кластерів")
+plt.xlabel("Кластер")
+plt.ylabel("Кількість документів")
+plt.show() 
+
+весь_текст = " ".join(df["очищено"])
+
+wordcloud = WordCloud(width=1400, height=700, background_color='white', colormap='viridis').generate(весь_текст)
+
+plt.figure(figsize=(16, 8))
+plt.imshow(wordcloud, interpolation='bilinear')
+plt.axis("off")
+plt.title("Хмара слів для всього корпусу після обробки", fontsize=20)
+plt.show()
+
+for cluster in range(3):
+    cluster_text = " ".join(df[df["кластер"] == cluster]["очищено"])
+    
+    wordcloud_cluster = WordCloud(width=1400, height=700, background_color='white', colormap='viridis').generate(cluster_text)
+    
+    plt.figure(figsize=(16, 8))
+    plt.imshow(wordcloud_cluster, interpolation='bilinear')
+    plt.axis("off")
+    plt.title(f"Хмара слів для кластеру {cluster}", fontsize=20)
+    plt.show()
