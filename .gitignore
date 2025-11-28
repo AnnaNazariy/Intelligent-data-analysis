@@ -1,0 +1,40 @@
+# Generated files
+*.png
+*.jpg
+*.jpeg
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual environments
+venv/
+ENV/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Model files
+*.h5
+*.hdf5
+*.keras
+*.pb
+saved_model/
+
+# Data files (large datasets)
+*.csv
+!boston.csv
+!train_and_test2.csv
