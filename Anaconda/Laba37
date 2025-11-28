@@ -327,8 +327,17 @@ class ActiveLearner:
         X_val_subset = X_labeled[val_indices]
         y_val_subset = y_labeled_cat[val_indices]
         
-        # Створення нової моделі
-        self.model = create_emotion_cnn()
+        # Створення або оновлення моделі (warm start для кращої конвергенції)
+        if self.model is None:
+            self.model = create_emotion_cnn()
+        else:
+            # Зберігаємо ваги для warm start
+            old_weights = self.model.get_weights()
+            self.model = create_emotion_cnn()
+            try:
+                self.model.set_weights(old_weights)
+            except ValueError:
+                pass  # Якщо форма ваг не співпадає, починаємо з нуля
         
         # Callbacks
         early_stop = EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)
@@ -345,9 +354,13 @@ class ActiveLearner:
         # Навчання з аугментацією
         datagen.fit(X_train_subset)
         
+        # Обчислення steps_per_epoch для коректного покриття всіх даних
+        steps_per_epoch = max(len(X_train_subset) // batch_size, 1)
+        
         self.model.fit(
             datagen.flow(X_train_subset, y_train_subset, batch_size=batch_size),
             epochs=epochs,
+            steps_per_epoch=steps_per_epoch,
             validation_data=(X_val_subset, y_val_subset),
             callbacks=[early_stop, reduce_lr],
             verbose=verbose
@@ -635,11 +648,22 @@ def plot_learning_curves(history_entropy, history_random):
     plt.show()
 
 
-def visualize_sample_selection(model, X_pool, n_samples=10):
+def visualize_sample_selection(model, X_pool, n_samples=10, max_pool_size=None):
     """
     Візуалізація вибраних зразків за ентропією.
+    
+    Args:
+        model: Навчена модель
+        X_pool: Пул даних для аналізу
+        n_samples: Кількість зразків для відображення
+        max_pool_size: Максимальний розмір пулу для аналізу (None = весь пул)
     """
-    predictions = model.predict(X_pool[:1000], verbose=0)
+    # Обмеження розміру пулу для економії пам'яті
+    if max_pool_size is None:
+        max_pool_size = len(X_pool)
+    pool_subset = X_pool[:min(max_pool_size, len(X_pool))]
+    
+    predictions = model.predict(pool_subset, verbose=0)
     uncertainties = calculate_entropy(predictions)
     
     # Найбільш невизначені
